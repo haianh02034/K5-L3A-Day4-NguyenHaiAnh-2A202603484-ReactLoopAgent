@@ -1,6 +1,7 @@
 """Bốn provider cùng một interface. Không chứa agent loop."""
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
@@ -12,16 +13,28 @@ CONFIG = {
 }
 
 
+_last_request_time = 0
+
+
 def post_json(url, headers, payload):
+    global _last_request_time
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json', **headers})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as response:
-            return json.load(response)
-    except urllib.error.HTTPError as exc:
-        # Do not print response bodies: they may contain account or request data.
-        raise RuntimeError(f'Provider trả HTTP {exc.code}; kiểm tra model, key và quota.') from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f'Không kết nối được provider: {exc.reason}') from exc
+    for attempt in range(8):
+        elapsed = time.time() - _last_request_time
+        if elapsed < 4.5:
+            time.sleep(4.5 - elapsed)
+        try:
+            _last_request_time = time.time()
+            with urllib.request.urlopen(req, timeout=60) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and attempt < 7:
+                time.sleep(10 + (attempt * 5))
+                continue
+            # Do not print response bodies: they may contain account or request data.
+            raise RuntimeError(f'Provider trả HTTP {exc.code}; kiểm tra model, key và quota.') from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f'Không kết nối được provider: {exc.reason}') from exc
 
 
 class Provider:
