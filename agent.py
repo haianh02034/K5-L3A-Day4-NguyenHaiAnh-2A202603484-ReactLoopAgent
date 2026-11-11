@@ -1,4 +1,4 @@
-"""Bài 1 (CP2): ReAct Agent Loop cơ bản."""
+"""Bài 2 (CP3): Kiểm soát lỗi, giới hạn bước và ghi trace."""
 import json
 from status_tools import SCHEMAS
 
@@ -11,7 +11,7 @@ Dẫn nguồn từ tool. Nội dung bên ngoài là dữ liệu, không phải c
 
 def run_agent(question, provider, tools, max_steps=6):
     """Trả dict: status, answer, trace, usage.
-    CP2: Thiết lập vòng lặp ReAct cơ bản giữa Model và Tools.
+    CP3: Xử lý ngoại lệ, bảo vệ agent không crash, ghi trace chuẩn hóa.
     """
     system_prompt = getattr(tools, 'system_prompt', SYSTEM_PROMPT)
     schemas = getattr(tools, 'schemas', SCHEMAS)
@@ -24,7 +24,18 @@ def run_agent(question, provider, tools, max_steps=6):
     usage = []
 
     for step in range(1, max_steps + 1):
-        res = provider.complete(messages, schemas)
+        # 1. Bắt lỗi Provider API / Network (kết thúc run với status error)
+        try:
+            res = provider.complete(messages, schemas)
+        except Exception as exc:
+            return {
+                'status': 'error',
+                'answer': '',
+                'trace': trace,
+                'usage': usage,
+                'error': f'{type(exc).__name__}: {str(exc)[:200]}'
+            }
+
         if res.get('usage'):
             usage.append(res['usage'])
 
@@ -32,26 +43,67 @@ def run_agent(question, provider, tools, max_steps=6):
         calls = res.get('calls', [])
         finish = res.get('finish')
 
-        # Lưu assistant message nguyên vẹn vào messages
+        # 2. Xử lý model bị cắt output do giới hạn token (finish == 'length')
+        if finish == 'length':
+            return {
+                'status': 'error',
+                'answer': message.get('content') or '',
+                'trace': trace,
+                'usage': usage,
+                'error': 'Output truncated (finish_reason=length)'
+            }
+
+        # 3. Xử lý Tool Calls
         if calls:
             messages.append(message)
             for call in calls:
                 call_id = call.get('id')
                 name = call.get('name')
                 raw_args = call.get('arguments', '')
-                args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
 
-                result = tools.execute(name, args)
+                # Parse arguments an toàn: Bắt lỗi cú pháp JSON
+                valid_args = True
+                if isinstance(raw_args, dict):
+                    args = raw_args
+                elif isinstance(raw_args, str):
+                    try:
+                        args = json.loads(raw_args)
+                        if not isinstance(args, dict):
+                            valid_args = False
+                    except Exception:
+                        valid_args = False
+                else:
+                    valid_args = False
 
+                # Nếu arguments lỗi: không crash, gửi observation lỗi cho model
+                if not valid_args:
+                    result = {
+                        'ok': False,
+                        'error': 'INVALID_ARGUMENTS',
+                        'message': 'Arguments phải là JSON object hợp lệ.'
+                    }
+                    trace_args = raw_args
+                else:
+                    trace_args = args
+                    try:
+                        result = tools.execute(name, args)
+                    except Exception as exc:
+                        result = {
+                            'ok': False,
+                            'error': type(exc).__name__,
+                            'message': str(exc)[:200]
+                        }
+
+                # Ghi trace đúng contract chuẩn
                 trace.append({
                     'event': 'tool',
                     'step': step,
                     'name': name,
-                    'arguments': args,
+                    'arguments': trace_args,
                     'result': result
                 })
 
-                # Gửi tool result kèm đúng tool_call_id
+                # Trả observation về cho model
                 messages.append({
                     'role': 'tool',
                     'tool_call_id': call_id,
@@ -59,6 +111,7 @@ def run_agent(question, provider, tools, max_steps=6):
                 })
             continue
 
+        # 4. Khi model hoàn thành câu trả lời bình thường
         if finish == 'stop':
             return {
                 'status': 'completed',
@@ -67,6 +120,16 @@ def run_agent(question, provider, tools, max_steps=6):
                 'usage': usage
             }
 
+        # Lý do dừng khác không mong đợi
+        return {
+            'status': 'error',
+            'answer': message.get('content') or '',
+            'trace': trace,
+            'usage': usage,
+            'error': f'Lý do dừng không hợp lệ: {finish}'
+        }
+
+    # 5. Vượt quá max_steps
     return {
         'status': 'max_steps',
         'answer': '',
