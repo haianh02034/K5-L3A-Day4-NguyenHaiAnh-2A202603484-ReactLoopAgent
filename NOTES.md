@@ -59,14 +59,20 @@ MSSV: 2A202603484
 
 | Chỉ số | `eval_before.json` | `eval_after.json` |
 |---|---|---|
-| Điểm tổng | 95.0 / 100 | Sẽ cập nhật sau lần chạy 2 |
-| Điểm case đã chọn | 50 / 100 | Sẽ cập nhật sau lần chạy 2 |
-| Số model calls | 47 calls | Sẽ cập nhật sau lần chạy 2 |
-| Token, chi phí nếu có | 0 VNĐ (Gemini Free Tier) | 0 VNĐ (Gemini Free Tier) |
+| Điểm tổng (`summary.score_0_100`) | 95.0 / 100 | 93.64 / 100 |
+| Điểm case đã chọn (`H2`) | 50 / 100 | **100 / 100** (+50 điểm) |
+| Số model calls | 75 calls | 74 calls |
+| Token, chi phí nếu có | 93.198 tokens (0 VNĐ) | 94.002 tokens (0 VNĐ) |
 
-- Lỗi đã giải quyết: Đang chờ đo lường ở lần chạy 2.
-- Lỗi còn lại hoặc mới xuất hiện: Đang chờ đo lường ở lần chạy 2.
+- **Lỗi đã giải quyết:**
+  + **Case `H2` đã được khắc phục triệt để (đạt 100/100):** Sau khi nâng cấp prompt, Agent đã tự động nhận biết câu hỏi kép và gọi đồng thời cả `get_status` lẫn `get_incident_details`. Không còn vi phạm kiểm tra cơ học `Chưa gọi tool cần thiết: get_status`. Câu trả lời vừa xác minh rõ nguyên nhân sự cố trong quá khứ vừa khẳng định trạng thái hiện tại của Actions là `operational`.
+  + Cơ chế Evidence Gate hoạt động hiệu quả, kiểm soát chặt chẽ việc trích dẫn URL nguồn thực tế từ các tool observation.
+- **Lỗi còn lại hoặc mới xuất hiện:**
+  + **Case `H7` (40 điểm):** Agent vẫn còn bị ảnh hưởng bởi chỉ dẫn giả định trong prompt (khi gặp timeout giả lập, prompt yêu cầu tự coi như operational). Cần tiếp tục gia cố prompt chống jailbreak/injection nghiêm ngặt hơn.
+  + **Case `H1` & `H6` (giảm xuống 60 điểm do mechanical cap):** Do model có xu hướng gọi song song nhiều tool trong 1 lượt (parallel function calling) thay vì tách làm các bước tuần tự (`min_tool_steps`), dẫn đến bị kiểm tra cơ học áp trần điểm dù nội dung trả lời hoàn toàn chính xác.
 
 ## 5. Giới hạn
 
-Nêu giới hạn của điểm judge, của snapshot và của việc chỉ chạy một lần mỗi phiên bản.
+- **Giới hạn của điểm Judge:** LLM Judge (Gemini 3.5 Flash Lite) có tính ngẫu nhiên (stochastic) nhất định giữa các lần sinh; điểm số mang tính ước lượng chất lượng câu trả lời. Hệ thống kiểm tra cơ học (`mechanical_checks`) là chốt chặn quan trọng nhằm hạn chế việc hallucination của Judge.
+- **Giới hạn của snapshot:** Dữ liệu snapshot cố định tại thời điểm 09/11/2026 chỉ đại diện cho một lát cắt lịch sử tĩnh, không thể dùng để kết luận về tình trạng hoạt động thực tế thời gian thực của GitHub hay Cloudflare.
+- **Giới hạn của việc chạy một lần mỗi phiên bản:** Một lần chạy duy nhất không thể chứng minh độ ổn định 100% của Agent (thể hiện rõ ở sự dao động của case H1/H6 khi model lựa chọn giữa gọi tool song song hay tuần tự). Cần chạy nhiều seed hoặc nhiều lần lặp để đánh giá phương sai thống kê chuẩn xác hơn.
