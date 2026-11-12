@@ -27,14 +27,14 @@ def post_json(url, headers, payload):
             _last_request_time = time.time()
             with urllib.request.urlopen(req, timeout=60) as response:
                 return json.load(response)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429 and attempt < 7:
+        except (urllib.error.HTTPError, TimeoutError, OSError) as exc:
+            code = getattr(exc, 'code', None)
+            if (code in (429, 500, 502, 503, 504) or isinstance(exc, (TimeoutError, OSError))) and attempt < 7:
                 time.sleep(10 + (attempt * 5))
                 continue
-            # Do not print response bodies: they may contain account or request data.
-            raise RuntimeError(f'Provider trả HTTP {exc.code}; kiểm tra model, key và quota.') from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f'Không kết nối được provider: {exc.reason}') from exc
+            if isinstance(exc, urllib.error.HTTPError):
+                raise RuntimeError(f'Provider trả HTTP {exc.code}; kiểm tra model, key và quota.') from exc
+            raise RuntimeError(f'Không kết nối được provider: {exc}') from exc
 
 
 class Provider:
